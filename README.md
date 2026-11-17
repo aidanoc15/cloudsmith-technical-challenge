@@ -23,7 +23,7 @@ Configured two upstream sources, both using **Cache and Proxy**:
 
 Cache and Proxy were selected for our upstream sources to allow Cloudsmith to serve as a centralized repository for all public dependencies your developers may want to use. By ensuring everything passes through Cloudsmith we gain visibility into how and what dependencies are being consumed. This further allows us to establish a single point for enacting security policies around those dependencies. 
 
-**Evidence:** [Upstream configuration](evidence/docker and pypu upstreams.png) · [Cached packages](evidence/cached packages.png)
+**Evidence:** [Upstream configuration](evidence/docker%20and%20pypu%20upstreams.png) · [Cached packages](evidence/cached%20packages.png)
 
 ## 2. GitHub Actions Workflow
 
