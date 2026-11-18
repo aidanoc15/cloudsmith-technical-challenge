@@ -1,0 +1,180 @@
+Terraform Provider for Cloudsmith
+=================================
+
+![](https://cloudsmith.com/images/uploads/resources/cloudsmith-logo-master-color.svg)
+
+Terraform provider for managing your Cloudsmith resources.
+
+Requirements
+------------
+
+- [Terraform](https://www.terraform.io/downloads.html) >= 0.12.x
+- [Go](https://golang.org/doc/install) >= 1.26 (to build the provider plugin)
+
+Building The Provider
+---------------------
+
+Clone repository:
+
+```sh
+git clone git@github.com:cloudsmith-io/terraform-provider-cloudsmith
+```
+
+Enter the provider directory and build the provider:
+
+```sh
+cd terraform-provider-cloudsmith
+go build
+```
+
+Using the provider
+------------------
+
+To use a released provider in your Terraform environment, run [`terraform init`](https://www.terraform.io/docs/commands/init.html) and Terraform will automatically install the provider. To specify a particular provider version when installing released providers, see the [Terraform documentation on provider versioning](https://www.terraform.io/docs/configuration/providers.html#version-provider-versions).
+
+To instead use a custom-built provider in your Terraform environment (e.g. the provider binary from the build instructions above), follow the instructions to [install it as a plugin.](https://www.terraform.io/docs/plugins/basics.html#installing-plugins) After placing the custom-built provider into your plugins directory, run `terraform init` to initialize it.
+
+### Authenticate with OIDC
+
+Authenticate with a Cloudsmith OIDC service account instead of a static API key. Only HCP Terraform (Terraform Cloud) workload identity is supported for now. Use an `oidc` block, or set `CLOUDSMITH_USE_OIDC=true`, and do not set `api_key` in HCL. The provider reads the workload identity token HCP Terraform injects into the run (`TFC_WORKLOAD_IDENTITY_TOKEN_CLOUDSMITH`, then `TFC_WORKLOAD_IDENTITY_TOKEN`) and exchanges it for a short-lived Cloudsmith token. Full setup, including the workspace-side `TFC_WORKLOAD_IDENTITY_AUDIENCE` variable, is in `docs/index.md`.
+
+```hcl
+provider "cloudsmith" {
+    oidc {
+        organization = "acme-org"
+        service_slug = "tfc-prod"
+    }
+}
+```
+
+You can omit `organization` and `service_slug` when `CLOUDSMITH_ORG` and `CLOUDSMITH_SERVICE_SLUG` are set. An empty `provider "cloudsmith" {}` block does not enable OIDC unless `CLOUDSMITH_USE_OIDC` is true. An `oidc` block ignores a leftover `CLOUDSMITH_API_KEY`.
+
+### Examples
+
+Create a repository with a custom entitlement token
+
+```
+provider "cloudsmith" {
+    api_key = "my-api-key"
+}
+
+data "cloudsmith_namespace" "my_namespace" {
+    slug = "my-namespace"
+}
+
+resource "cloudsmith_repository" "my_repository" {
+    description = "A certifiably-awesome private package repository"
+    name        = "My Repository"
+    namespace   = data.cloudsmith_namespace.my_namespace.slug_perm
+    slug        = "my-repository"
+}
+
+resource "cloudsmith_entitlement" "my_entitlement" {
+    name       = "Test Entitlement"
+    namespace  = cloudsmith_repository.test.namespace
+    repository = cloudsmith_repository.test.slug_perm
+}
+```
+
+Retrieve a list of packages from a repository
+
+```
+provider "cloudsmith" {
+    api_key = "my-api-key"
+}
+
+data "cloudsmith_namespace" "my_namespace" {
+  slug = "my-namespace"
+}
+
+data "cloudsmith_repository" "my_repository" {
+  namespace  = data.cloudsmith_namespace.my_namespace.slug
+  identifier = "my-repository"
+}
+
+data "cloudsmith_package_list" "my_packages" {
+  namespace     = data.cloudsmith_repository.my_repository.namespace
+  repository    = data.cloudsmith_repository.my_repository.slug_perm
+  filters       = ["format:docker", "name:^my-package"]
+}
+
+output "packages" {
+  value = formatlist("%s-%s", data.cloudsmith_package_list.my_packages.packages.*.name, data.cloudsmith_package_list.my_packages.packages.*.version)
+}
+```
+
+Connect two repositories so the source resolves packages against the target
+
+```
+provider "cloudsmith" {
+    api_key = "my-api-key"
+}
+
+data "cloudsmith_namespace" "my_namespace" {
+  slug = "my-namespace"
+}
+
+resource "cloudsmith_repository" "source" {
+    name      = "source-repo"
+    namespace = data.cloudsmith_namespace.my_namespace.slug_perm
+}
+
+resource "cloudsmith_repository" "target" {
+    name      = "target-repo"
+    namespace = data.cloudsmith_namespace.my_namespace.slug_perm
+}
+
+resource "cloudsmith_repository_connected" "link" {
+    namespace         = cloudsmith_repository.source.namespace
+    repository        = cloudsmith_repository.source.slug_perm
+    target_repository = cloudsmith_repository.target.slug
+    is_active         = true
+    priority          = 1
+}
+
+data "cloudsmith_repository_connected_list" "all" {
+    namespace  = cloudsmith_repository.source.namespace
+    repository = cloudsmith_repository.source.slug_perm
+}
+```
+
+Testing the Provider
+-----------------------
+
+In order to test the provider, you can run `go test`.
+
+```sh
+go test -v ./...
+```
+
+In order to run the full suite of Acceptance tests, you'll need a paid Cloudsmith account.
+
+You'll also need to set a few environment variables:
+
+- `TF_ACC=1`: Used to enable acceptance tests during `go test`.
+- `CLOUDSMITH_API_KEY`: API key used to manage resources during test runs.
+- `CLOUDSMITH_NAMESPACE`: Cloudsmith namespace in which to create and destroy resources under test.
+
+*Note:* Acceptance tests create real resources, and may cost money to run.
+
+The policy-list acceptance fixtures create their own seed policy first, then poll
+the exact list query for that seed's identity (up to 30 seconds) before Terraform
+reads the data source. API errors fail immediately; a legitimate empty list in
+the production data source is not retried. The hermetic policy-list fixture tests
+exercise the same HCL through Terraform with a local mock API, including delayed
+visibility and owned-resource cleanup. They run without `TF_ACC` or Cloudsmith
+credentials; set `TF_ACC_TERRAFORM_PATH` to an installed Terraform executable to
+avoid the SDK downloading one.
+
+```sh
+export TF_ACC=1
+export CLOUDSMITH_API_KEY=mykey
+export CLOUDSMITH_NAMESPACE=mynamespace
+go test -v ./...
+```
+
+If needed, you can also run individual tests with the `-run` flag:
+
+```sh
+go test -v -run=TestAccEntitlement_basic ./...
+```
